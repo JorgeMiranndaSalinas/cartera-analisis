@@ -1,0 +1,72 @@
+export default async function handler(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
+
+  const { ticker, name, market } = req.body;
+  if (!ticker) return res.status(400).json({ error: "Ticker requerido" });
+
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: "API key no configurada en el servidor" });
+
+  const today = new Date().toLocaleDateString("es-ES", {
+    timeZone: "Europe/Madrid",
+    day: "numeric", month: "long", year: "numeric",
+  });
+
+  const prompt = `Eres un analista financiero senior. Analiza la acción ${ticker} (${name || ticker}, mercado ${market || "desconocido"}).
+Hoy es ${today}. Usa búsqueda web para obtener datos ACTUALES y reales.
+
+Responde en español con estas secciones exactas:
+
+## 🏢 Modelo de negocio y salud financiera
+Resumen del negocio, fuentes de ingresos principales y estado financiero actual (deuda, márgenes, flujo de caja reciente).
+
+## 📊 Precio y valoración
+Precio actual y variación semanal y mensual. Compara PER, EV/EBITDA y precio objetivo de consenso frente a sus principales competidores del sector.
+
+## 🐻 Caso bajista
+Argumentos concretos y detallados por los que el precio puede caer. Sin optimismo forzado — sé igual de exhaustivo que en el caso alcista.
+
+## 🐂 Caso alcista
+Catalizadores concretos de subida próximos: resultados, expansión, tendencias de sector, contexto macro favorable.
+
+## 📰 Noticias clave esta semana
+Las 2-3 noticias más relevantes de los últimos 7 días que puedan mover el precio.
+
+## 🎯 Veredicto para el inversor actual
+El inversor YA TIENE esta acción en cartera y quiere saber si es momento de salir. ¿Debe VENDER ahora, MANTENER y esperar, o COMPRAR más posición? Incluye un precio objetivo a 3 meses basado en el consenso de analistas.
+Incluye exactamente una de estas palabras en mayúsculas: VENDER, MANTENER o COMPRAR.
+
+Termina siempre con: "Esto no es asesoramiento financiero."`;
+
+  try {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1500,
+        tools: [{ type: "web_search_20250305", name: "web_search" }],
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      return res.status(response.status).json({ error: err?.error?.message || `Error ${response.status}` });
+    }
+
+    const data = await response.json();
+    const text = data.content
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+
+    return res.status(200).json({ text });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+}
